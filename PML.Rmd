@@ -1,0 +1,157 @@
+---
+title: 'Coursera PML Assignment: Predicting how well an exercise is performed'
+author: "Najma Rajah"
+date: "30/03/2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. People regularly quantify how much of a particular activity they do, but they rarely quantify how well they do it. This project examined data from accelerometers on the belt, forearm, arm, and dumbell of six young men who conducted a weight-lifting exercise to predict whether they performed the exercise correctly. The analysis found that the random forest model was the most accurate of the four models considered. 
+
+## Exploratory data analysis
+
+The first step involved loading the data.
+
+```{r load}
+
+fileUrl1<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv?accessType=DOWNLOAD"
+download.file(fileUrl1, destfile = "pml-training.csv", method="curl")
+dateDownloaded<-date()
+
+fileUrl2<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv?accessType=DOWNLOAD"
+download.file(fileUrl2, destfile = "pml-testing.csv", method="curl")
+dateDownloaded<-date()
+
+traindata<-read.csv("pml-training.csv", header=TRUE,sep=",", stringsAsFactors = FALSE)
+testdata<-read.csv("pml-testing.csv", header=TRUE,sep=",", stringsAsFactors = FALSE)
+```
+
+The training data set comprises 19,622 observations and 160 variables. As the goal of this project is to predict whether each particant performed the exercise correctly, it is useful to tabulate the variable classe. The classe variable had five levels - A to E. A indicated that the exercise was performed correctly and categories B to E indicated that there was some form of mistake. 
+
+As well as the classe variable, the training data set also included data from accelerometers on the belt, forearm, and dumbell of the six participants. However variables had many missing values. So it was necessary to remove variables which have many NAs or missing values, both in the training and in the test data sets.  We also repeated this process for the test data set.
+
+
+```{r eda, echo=TRUE}
+table(traindata$classe)
+
+library(dplyr)
+traindata<-select(traindata, (8:11),(37:49),(60:68),(84:86),102,(113:124),140,(151:159),160)
+testdata<-select(testdata, (8:11),(37:49),(60:68),(84:86),102,(113:124),140,(151:159))
+
+```
+
+As a result of this data cleaning, the number of variables was reduced to 53.
+```{r clean, echo=TRUE}
+dim(traindata)
+```
+
+## Creating of a testing data set
+In order to assess the performance of alternative models, it is necessary to split the original training set (comprising 16922 observations) into two - a training data set and a testing data set which provides an opportunity to understand how each model performs when it is required to predict out of sample. 
+
+ ```{r split, echo=TRUE}
+library(caret) 
+inTrain<-createDataPartition(y=traindata$classe, p=0.75, list=FALSE)
+training<-traindata[inTrain,]
+testing<-traindata[-inTrain,]
+table(training$classe)
+ 
+```
+
+
+## Development of four models based on the training data set
+The analysis looked at four approaches which are suitable for predicting categorical data - Linear Discrimant Analysis (LDA), tree based methods, Boosting and Random Forests. For each model, we (a) estimated the parameters for each model based on the training data set; (b) estimated predictions based on each model using the testing data set; and (c) assessed the performance of each model based on the output of the confusion Matrix. 
+
+Of particular interest was the accuracy rate for each model as this shows the proportion of correct predictions when the model predicts out of sample.  Note that a seed was set for the tree based, boosting and random forests to enable reproducibility.
+
+### Linear Discriminant Analysis
+```{r LDA, echo=TRUE}
+library(caret)
+set.seed(109)
+model1<-train(classe~., data=training, method="lda")
+pmodel1<-predict(model1, newdata=testing)
+testing$classe<-as.factor(testing$classe)
+confusionMatrix(pmodel1, testing$classe)
+
+```
+
+The LDA model had an accuracy of around 0.70.
+
+### Tree-based model
+
+
+```{r tree, echo=TRUE}
+library(caret)
+library(rattle)
+
+set.seed(123)
+model2<-train(classe~., method="rpart", data=training)
+
+```
+
+The chart shows that the model performed relatively poorly within sample, predicting that 52% of observations in the training data set were in category A when the actual percentage in class A was 28%. The model therefore also performed badly out of sample (in the testing set), with an accuracy of around 0.49.
+
+
+```{r acctree, echo=FALSE}
+
+fancyRpartPlot(model2$finalModel)
+
+
+pmodel2<-predict(model2, newdata=testing)
+confusionMatrix(pmodel2, testing$classe)
+
+```
+### Boosting 
+
+Boosting is an approach which improves the predictions from a decision tree.  It works by fitting trees on a sequential basis to the errors and by placing greater weight on large errors, it generates more accurate predictions than simple decision tree-based models. 
+
+```{r boosting, echo=FALSE}
+
+set.seed(321)
+model3<-train(classe~., method="gbm", data=training, verbose=FALSE)
+
+pmodel3<-predict(model3, newdata=testing)
+confusionMatrix(pmodel3, testing$classe)
+
+```
+The accuracy for this model was around 0.96.
+
+###Random Forest
+
+Random Forest models build on the basic principles of decision trees but use an approach which leads to improved accuracy. It only considers a subset of the predictors at each split, and places less weight on strong predictors, to avoid the problem of highly correlated trees. This makes the resulting trees less variable and more reliable. 
+
+A disadvantage of random forests is that they can be slow to estimate. For this reason,  the parallel package was used in conjuntion with the caret package. For further discussion see https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md
+for further discussion.
+
+```{r random, echo=FALSE}
+
+set.seed(101)
+
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+        
+fitControl <- trainControl(method = "cv", number = 3, allowParallel = TRUE)
+
+model4<-train(classe~., method="rf", data=training, verbose=FALSE, trControl=fitControl)
+
+stopCluster(cluster)
+registerDoSEQ()
+
+pmodel4<-predict(model4, newdata=testing)
+confusionMatrix(pmodel4, testing$classe)
+
+```
+
+The random forest model had the highest accuracy at around 0.99. 
+
+## Prediction using the test data
+
+For this reason, the random forest model was used to predict the variable classe in the test data. It predicted correctly for 100% of the observations in the test data set. 
